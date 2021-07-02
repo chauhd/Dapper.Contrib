@@ -66,7 +66,6 @@ namespace Dapper.Contrib.Extensions
 
             return obj;
         }
-
         /// <summary>
         /// Returns a list of entities from table "Ts".  
         /// Id of T must be marked with [Key] attribute.
@@ -80,28 +79,66 @@ namespace Dapper.Contrib.Extensions
         /// <returns>Entity of T</returns>
         public static Task<IEnumerable<T>> GetAllAsync<T>(this IDbConnection connection, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
         {
+            return GetAllAsync<T>(connection, 0, -1, null, null, null, transaction, commandTimeout);
+        }
+
+        /// <summary>
+        /// Returns a list of entities from table "Ts".
+        /// Id of T must be marked with [Key] attribute.
+        /// Entities created from interfaces are tracked/intercepted for changes and used by the Update() extension
+        /// for optimal performance.
+        /// </summary>
+        /// <typeparam name="T">Interface or type to create and populate</typeparam>
+        /// <param name="connection">Open SqlConnection</param>
+        /// <param name="skip">skip n record(s)</param>
+        /// <param name="take">take n record(s)</param>
+        /// <param name="order">order by, null order by key</param>
+        /// <param name="whereClause">where clause, exclude 'where' keyword</param>
+        /// <param name="param">params that match where clause</param>
+        /// <param name="transaction">The transaction to run under, null (the default) if none</param>
+        /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
+        /// <returns>Entity of T</returns>
+        public static Task<IEnumerable<T>> GetAllAsync<T>(this IDbConnection connection, int skip = 0, int take = -1, string order = null, string whereClause = null, object param = null, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        {
             var type = typeof(T);
             var cacheType = typeof(List<T>);
 
-            if (!GetQueries.TryGetValue(cacheType.TypeHandle, out string sql))
+            //if (!GetQueries.TryGetValue(cacheType.TypeHandle, out string sql))
+            //{
+            //    GetSingleKey<T>(nameof(GetAll));
+            //    var name = GetTableName(type);
+
+            //    sql = "SELECT * FROM " + name;
+            //    GetQueries[cacheType.TypeHandle] = sql;
+            //}
+            GetSingleKey<T>(nameof(GetAll));
+            var name = GetTableName(type);
+            if (string.IsNullOrEmpty(order))
             {
-                GetSingleKey<T>(nameof(GetAll));
-                var name = GetTableName(type);
-
-                sql = "SELECT * FROM " + name;
-                GetQueries[cacheType.TypeHandle] = sql;
+                List<string> lstKey = (from field in KeyPropertiesCache(type) select field.Name).ToList();
+                if (lstKey.Count == 0) lstKey = (from field in ExplicitKeyPropertiesCache(type) select field.Name).ToList();
+                order = string.Join(",", lstKey);
             }
-
+            List<string> lstTableFields = (from field in TypePropertiesCache(type) select field.Name).ToList();
+            string sql = $"select {string.Join(",", lstTableFields)} from {name}";
+            if (!string.IsNullOrEmpty(whereClause))
+            {
+                sql = $"{sql} where {whereClause}";
+            }
+            if (take > 0)
+            {
+                sql = $"{sql} order by  {order} \r\n OFFSET  {skip} ROWS \r\n FETCH NEXT {take} ROWS ONLY;";
+            }
             if (!type.IsInterface)
             {
-                return connection.QueryAsync<T>(sql, null, transaction, commandTimeout);
+                return connection.QueryAsync<T>(sql, param, transaction, commandTimeout);
             }
-            return GetAllAsyncImpl<T>(connection, transaction, commandTimeout, sql, type);
+            return GetAllAsyncImpl<T>(connection, transaction, commandTimeout, sql, type, param);
         }
 
-        private static async Task<IEnumerable<T>> GetAllAsyncImpl<T>(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string sql, Type type) where T : class
+        private static async Task<IEnumerable<T>> GetAllAsyncImpl<T>(IDbConnection connection,  IDbTransaction transaction,  int? commandTimeout, string sql, Type type, object param = null) where T : class
         {
-            var result = await connection.QueryAsync(sql, transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
+            var result = await connection.QueryAsync(sql, param, transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
             var list = new List<T>();
             foreach (IDictionary<string, object> res in result)
             {
