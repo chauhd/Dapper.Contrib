@@ -57,6 +57,7 @@ namespace Dapper.Contrib.Extensions
         private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> TypeProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
         private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> ComputedProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
         private static readonly ConcurrentDictionary<RuntimeTypeHandle, string> GetQueries = new ConcurrentDictionary<RuntimeTypeHandle, string>();
+        private static readonly ConcurrentDictionary<RuntimeTypeHandle, List<string>> GetAllQueries = new ConcurrentDictionary<RuntimeTypeHandle, List<string>>();
         private static readonly ConcurrentDictionary<RuntimeTypeHandle, string> TypeTableName = new ConcurrentDictionary<RuntimeTypeHandle, string>();
 
         private static readonly ISqlAdapter DefaultAdapter = new SqlServerAdapter();
@@ -250,26 +251,33 @@ namespace Dapper.Contrib.Extensions
         /// <returns>Entity of T</returns>
         public static IEnumerable<T> GetAll<T>(this IDbConnection connection,int skip=0, int take=-1,string order=null, string whereClause=null, object param=null, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
         {
+
             var type = typeof(T);
-            GetSingleKey<T>(nameof(GetAll));
-            var name = GetTableName(type);
-            if (string.IsNullOrEmpty(order))
+            var cacheType = typeof(List<T>);
+            if (!GetAllQueries.TryGetValue(cacheType.TypeHandle, out List<string> lstAllPartSQL))
             {
-                List<string> lstKey= (from field in KeyPropertiesCache(type) select field.Name).ToList();
+                lstAllPartSQL = new List<string> { };
+                GetSingleKey<T>(nameof(GetAll));
+                var name = GetTableName(type);
+                  List<string> lstKey = (from field in KeyPropertiesCache(type) select field.Name).ToList();
                 if (lstKey.Count == 0) lstKey = (from field in ExplicitKeyPropertiesCache(type) select field.Name).ToList();
-                order = string.Join(",", lstKey);
+                string orderByKey = string.Join(",", lstKey);
+                List<string> lstTableFields = (from field in TypePropertiesCache(type) where field.CanWrite select field.Name).ToList();
+                lstAllPartSQL.Add(name); //index 0
+                lstAllPartSQL.Add(string.Join(",", lstTableFields)); //index 1
+                lstAllPartSQL.Add(orderByKey); //index 2
+                GetAllQueries[cacheType.TypeHandle] = lstAllPartSQL;
             }
-            List<string> lstTableFields = (from field in TypePropertiesCache(type) select field.Name).ToList();
-            string sql = $"select {string.Join(",", lstTableFields)} from {name}";
+            string sql = $"select {lstAllPartSQL[1]} from {lstAllPartSQL[0]}";
             if (!string.IsNullOrEmpty(whereClause))
             {
                 sql = $"{sql} where {whereClause}";
             }
-            if (take>0)
+            order = string.IsNullOrEmpty(order) ? null : order;
+            if (take > 0)
             {
-                sql = $"{sql} order by  {order} \r\n OFFSET  {skip} ROWS \r\n FETCH NEXT {take} ROWS ONLY;";
+                sql = $"{sql} order by  { order ?? lstAllPartSQL[2] } \r\n OFFSET  {skip} ROWS \r\n FETCH NEXT {take} ROWS ONLY;";
             }
-
             if (!type.IsInterface) return connection.Query<T>(sql, param, transaction, commandTimeout: commandTimeout);
             var result = connection.Query(sql, param);
             var list = new List<T>();

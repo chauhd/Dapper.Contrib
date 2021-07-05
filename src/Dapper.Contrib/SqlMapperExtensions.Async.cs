@@ -102,38 +102,35 @@ namespace Dapper.Contrib.Extensions
         {
             var type = typeof(T);
             var cacheType = typeof(List<T>);
-
-            //if (!GetQueries.TryGetValue(cacheType.TypeHandle, out string sql))
-            //{
-            //    GetSingleKey<T>(nameof(GetAll));
-            //    var name = GetTableName(type);
-
-            //    sql = "SELECT * FROM " + name;
-            //    GetQueries[cacheType.TypeHandle] = sql;
-            //}
-            GetSingleKey<T>(nameof(GetAll));
-            var name = GetTableName(type);
-            if (string.IsNullOrEmpty(order))
+            if (!GetAllQueries.TryGetValue(cacheType.TypeHandle, out List<string> lstAllPartSQL))
             {
+                lstAllPartSQL = new List<string> { };
+                GetSingleKey<T>(nameof(GetAll));
+                var name = GetTableName(type);
                 List<string> lstKey = (from field in KeyPropertiesCache(type) select field.Name).ToList();
                 if (lstKey.Count == 0) lstKey = (from field in ExplicitKeyPropertiesCache(type) select field.Name).ToList();
-                order = string.Join(",", lstKey);
+                string orderByKey = string.Join(",", lstKey);
+                List<string> lstTableFields = (from field in TypePropertiesCache(type) where field.CanWrite select field.Name).ToList();
+                lstAllPartSQL.Add(name); //index 0
+                lstAllPartSQL.Add(string.Join(",", lstTableFields)); //index 1
+                lstAllPartSQL.Add(orderByKey); //index 2
+                GetAllQueries[cacheType.TypeHandle] = lstAllPartSQL;
             }
-            List<string> lstTableFields = (from field in TypePropertiesCache(type) select field.Name).ToList();
-            string sql = $"select {string.Join(",", lstTableFields)} from {name}";
+            string sql = $"select {lstAllPartSQL[1]} from {lstAllPartSQL[0]}";
             if (!string.IsNullOrEmpty(whereClause))
             {
                 sql = $"{sql} where {whereClause}";
             }
+            order = string.IsNullOrEmpty(order) ? null : order;
             if (take > 0)
             {
-                sql = $"{sql} order by  {order} \r\n OFFSET  {skip} ROWS \r\n FETCH NEXT {take} ROWS ONLY;";
+                sql = $"{sql} order by  { order ?? lstAllPartSQL[2] } \r\n OFFSET  {skip} ROWS \r\n FETCH NEXT {take} ROWS ONLY;";
             }
             if (!type.IsInterface)
             {
                 return connection.QueryAsync<T>(sql, param, transaction, commandTimeout);
             }
-            return GetAllAsyncImpl<T>(connection, transaction, commandTimeout, sql, type, param);
+            return GetAllAsyncImpl<T>(connection, transaction, commandTimeout, sql, type,param);
         }
 
         private static async Task<IEnumerable<T>> GetAllAsyncImpl<T>(IDbConnection connection,  IDbTransaction transaction,  int? commandTimeout, string sql, Type type, object param = null) where T : class
