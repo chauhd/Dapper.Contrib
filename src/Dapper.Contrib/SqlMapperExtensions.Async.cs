@@ -132,7 +132,28 @@ namespace Dapper.Contrib.Extensions
             }
             return GetAllAsyncImpl<T>(connection, transaction, commandTimeout, sql, type,param);
         }
-
+        /// <summary>
+        /// Excute query with skip and take parameter. 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="connection"></param>
+        /// <param name="sql">TSQL string to select and it must have order parameter</param>
+        /// <param name="skip">skip n item</param>
+        /// <param name="take">take next item</param>
+        /// <param name="param"></param>
+        /// <param name="transaction"></param>
+        /// <param name="commandTimeout"></param>
+        /// <returns>List of [T] </returns>
+        public static Task<IEnumerable<T>> QueryExtAsync<T>(this IDbConnection connection, string sql, int skip = 0, int take = 1, object param = null, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        {
+            if (skip >= 0 && take > 0)
+            {
+                sql = sql.TrimEnd(' ').TrimEnd(';');
+                sql = $"{sql} \r\n OFFSET  {skip} ROWS \r\n FETCH NEXT {take} ROWS ONLY;";
+            }
+            var list =  connection.QueryAsync<T>(sql, param, transaction,commandTimeout);
+            return list;
+        }
         private static async Task<IEnumerable<T>> GetAllAsyncImpl<T>(IDbConnection connection,  IDbTransaction transaction,  int? commandTimeout, string sql, Type type, object param = null) where T : class
         {
             var result = await connection.QueryAsync(sql, param, transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);

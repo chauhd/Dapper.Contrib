@@ -249,6 +249,8 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>Entity of T</returns>
+     
+
         public static IEnumerable<T> GetAll<T>(this IDbConnection connection,int skip=0, int take=-1,string order=null, string whereClause=null, object param=null, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
         {
 
@@ -303,7 +305,28 @@ namespace Dapper.Contrib.Extensions
             }
             return list;
         }
-
+        /// <summary>
+        /// Excute query with skip and take parameter
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="connection"></param>
+        /// <param name="sql">TSQL string to select and it must have order parameter</param>
+        /// <param name="skip">skip n item</param>
+        /// <param name="take">take next item</param>
+        /// <param name="param"></param>
+        /// <param name="transaction"></param>
+        /// <param name="commandTimeout"></param>
+        /// <returns>List of [T]</returns>
+        public static IEnumerable<T> QueryExt<T>(this IDbConnection connection,string sql, int skip = 0, int take = 1,  object param = null, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        {
+            if (skip>=0 && take>0)
+            {
+                sql = sql.TrimEnd(' ').TrimEnd(';');
+                sql = $"{sql} \r\n OFFSET  {skip} ROWS \r\n FETCH NEXT {take} ROWS ONLY;";
+            }
+            var list = connection.Query<T>(sql, param, transaction,true, commandTimeout);
+            return list;
+        }
         /// <summary>
         /// Specify a custom table name mapper based on the POCO type name
         /// </summary>
